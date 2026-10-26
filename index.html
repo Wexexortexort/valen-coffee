@@ -26051,6 +26051,17 @@ void main() {
   function setSurfaceTextures(t) {
     T = t;
   }
+  var HAZE = { value: new Color(0.9, 0.9, 0.9) };
+  function addHaze(m) {
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.uHaze = HAZE;
+      sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vHazeW;").replace("#include <project_vertex>", "#include <project_vertex>\nvHazeW = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+      sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nuniform vec3 uHaze; varying vec3 vHazeW;").replace("#include <opaque_fragment>", `#include <opaque_fragment>
+        float hd = length(vec2(max(vHazeW.z - 4.0, 0.0), max(abs(vHazeW.x - 0.5) - 8.0, 0.0) * 0.6));
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, uHaze, smoothstep(0.0, 1.0, pow(clamp(hd / 52.0, 0.0, 1.0), 0.75)));`);
+    };
+    m.customProgramCacheKey = () => "haze";
+  }
   function std(o) {
     return new MeshStandardMaterial({ vertexColors: true, ...o });
   }
@@ -26098,6 +26109,7 @@ void main() {
     if (!DEFS[key]) throw new Error("unknown material " + key);
     const m = DEFS[key]();
     m.name = k;
+    if (room === "out" && m.isMeshStandardMaterial) addHaze(m);
     cache.set(k, m);
     return m;
   }
@@ -27171,6 +27183,7 @@ void main() {
     lantern([1.6, 2.3, 0.35]);
     rod("black", [1.6, 2.72, 0.35], [1.6, 3, 0.1], 6e-3, { c: 1118481 });
     slab("concrete", -9, -0.17, 3.3, 9, -0.05, 3.42, { world: 1.5 });
+    for (const [x0, x1] of [[4.75, 9], [-9, -6.3]]) slab("plaster", x0, -0.17, -0.4, x1, -0.06, 3.3, { world: 1.5, c: 11842220 });
     slab("asphalt", -120, -0.2, 3.3, 120, -0.17, 60, { world: 3 });
     for (let i = 0; i < 24; i++) slab("paint", -50 + i * 4.2, -0.169, 8, -48 + i * 4.2, -0.168, 8.12, { c: 14474454 });
     slab("paint", -60, -0.1695, 5.05, 60, -0.1685, 5.17, { c: 14211282 });
@@ -28385,14 +28398,13 @@ void main() {
         zen: { value: new Color(0.17, 0.36, 0.72).multiplyScalar(1.5) },
         // restrained clear blue at EXPO.out 0.8
         hor: { value: new Color(0.6, 0.72, 0.86).multiplyScalar(1.6) },
-        gnd: { value: new Color(0.3, 0.3, 0.29) },
         sun: { value: SUN_DIR },
         cloudI: { value: 1.15 },
         cap: { value: 0 }
       },
       vertexShader: `varying vec3 vDir;
       void main() { vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: `uniform vec3 zen, hor, gnd, sun; uniform float cloudI, cap; varying vec3 vDir;
+      fragmentShader: `uniform vec3 zen, hor, sun; uniform float cloudI, cap; varying vec3 vDir;
       float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float n(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
         return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
@@ -28401,7 +28413,7 @@ void main() {
         vec3 d = normalize(vDir); float y = d.y;
         vec3 col = mix(hor, zen, pow(clamp(y, 0.0, 1.0), 0.5));
         col = mix(col, hor * 1.04, exp(-max(y, 0.0) * 16.0) * 0.55);          // haze band at the horizon
-        if (y < 0.0) col = mix(hor, gnd, clamp(-y * 6.0, 0.0, 1.0));
+        if (y < 0.0) col = hor * 1.02;                                         // below the horizon = same haze the fog fades to
         float sd = max(dot(d, sun), 0.0);
         col += vec3(1.0, 0.95, 0.85) * (pow(sd, 6.0) * 0.18 + pow(sd, 400.0) * 3.0);
         if (y > 0.015) {                                                       // flat cloud layer, perspective-projected
@@ -31684,6 +31696,7 @@ void main() {
     }
     floors = meshes.filter((m) => /\|(oak|oakM|deck|asphalt)$/.test(m.name));
     scene.add(sky = makeSky());
+    HAZE.value.copy(sky.material.uniforms.hor.value).multiplyScalar(1.02);
     rig = new LightRig(scene, tier);
     progress(0.8);
     await tick();
